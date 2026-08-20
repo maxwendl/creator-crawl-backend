@@ -1,0 +1,12 @@
+steps:
+  # Build and deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/run'
+    args:
+      - deploy
+      - creator-crawl-backend
+      - '--source=.'
+      - '--platform=managed'
+      - '--region=europe-west1'
+      - '--allow-unauthenticated'
+
+timeout: '1800s'
