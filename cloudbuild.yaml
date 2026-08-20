@@ -1,9 +1,10 @@
 steps:
-  # Build and deploy to Cloud Run
-  - name: 'gcr.io/cloud-builders/run'
+  # Build Docker image and deploy to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
     args:
-      - deploy
-      - creator-crawl-backend
+      - 'run'
+      - 'deploy'
+      - 'creator-crawl-backend'
       - '--source=.'
       - '--platform=managed'
       - '--region=europe-west1'
