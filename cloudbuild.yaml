@@ -1,16 +1,17 @@
 steps:
   - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: bash
     args:
-      - '-c'
-      - |
-        gcloud run deploy creator-crawl-backend \
-          --source . \
-          --region europe-west1 \
-          --platform managed \
-          --allow-unauthenticated
+      - 'run'
+      - 'deploy'
+      - 'creator-crawl-backend'
+      - '--source=.'
+      - '--region=europe-west1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--project=$PROJECT_ID'
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/748311918336-compute@developer.gserviceaccount.com'
 
 timeout: '1800s'
