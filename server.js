@@ -20,7 +20,7 @@ try {
   console.log('Firebase already initialized');
 }
 
-const db = admin.firestore();
+const db = admin.firestore('creator-crawl');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
 const SHARED_EMAIL = process.env.SHARED_EMAIL || 'user@example.com';
