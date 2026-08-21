@@ -1,17 +1,19 @@
 steps:
-  - name: 'gcr.io/cloud-builders/gcloud'
-    args:
-      - 'run'
-      - 'deploy'
-      - 'creator-crawl-backend'
-      - '--source=.'
-      - '--region=europe-west1'
-      - '--platform=managed'
-      - '--allow-unauthenticated'
-      - '--project=$PROJECT_ID'
+- name: 'gcr.io/cloud-builders/gcloud'
+  entrypoint: bash
+  args:
+  - -c
+  - |
+    gcloud run deploy creator-crawl-backend \
+      --source . \
+      --region europe-west1 \
+      --platform managed \
+      --allow-unauthenticated
+
+# CORRECT: Place serviceAccount at the root level of the file
+serviceAccount: 'projects/project-ea15e69f-4168-435a-966/serviceAccounts/748311918336-compute@developer.gserviceaccount.com@project-ea15e69f-4168-435a-966.iam.gserviceaccount.com'
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/748311918336-compute@developer.gserviceaccount.com'
-
-timeout: '1800s'
+  dynamicSubstitutions: true
+  substitutionOption: ALLOW_LOOSE
