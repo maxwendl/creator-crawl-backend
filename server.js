@@ -6,6 +6,7 @@
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
+const { getFirestore } = require('firebase-admin/firestore'); // <-- Add this line
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
@@ -20,7 +21,7 @@ try {
   console.log('Firebase already initialized');
 }
 
-const db = admin.firestore('creator-crawl');
+const db = admin.firestore();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
 const SHARED_EMAIL = process.env.SHARED_EMAIL || 'user@example.com';
