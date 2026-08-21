@@ -10,8 +10,7 @@ steps:
       --platform managed \
       --allow-unauthenticated
 
-# CORRECT: Place serviceAccount at the root level of the file
-serviceAccount: 'projects/project-ea15e69f-4168-435a-966/serviceAccounts/748311918336-compute@developer.gserviceaccount.com@project-ea15e69f-4168-435a-966.iam.gserviceaccount.com'
+serviceAccount: 'projects/project-ea15e69f-4168-435a-966/serviceAccounts/748311918336-compute@project-ea15e69f-4168-435a-966.iam.gserviceaccount.com'
 
 options:
   logging: CLOUD_LOGGING_ONLY
