@@ -300,6 +300,21 @@ function isDueToday(handle) {
   return daysSince >= (FREQUENCY_DAYS[handle.frequency] || 1);
 }
 
+async function fetchWithRetry(url, options, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const resp = await fetch(url, options);
+
+    // Retry only on transient upstream errors
+    if ((resp.status === 502 || resp.status === 503) && attempt < maxRetries) {
+      const waitMs = attempt * 2000; // 2s, 4s, 6s backoff
+      console.log(`CreatorCrawl returned ${resp.status}, retrying in ${waitMs / 1000}s (attempt ${attempt}/${maxRetries})...`);
+      await new Promise(r => setTimeout(r, waitMs));
+      continue;
+    }
+    return resp;
+  }
+}
+
 /* =====================================================================
    MAIN CRAWL PIPELINE (PATCHED with better error handling)
    ===================================================================== */
@@ -323,7 +338,7 @@ async function runCrawlForUser(userEmail) {
       // Step 1: Fetch reels from CreatorCrawl API with proper error handling
       console.log(`Fetching reels for @${handle.handle}...`);
       
-      const ccResp = await fetch(`${CC_BASE}/instagram/user/reels?handle=${handle.handle}`, {
+      const ccResp = await fetchWithRetry(`${CC_BASE}/instagram/user/reels?handle=${handle.handle}`, {
         headers: { 'Authorization': `Bearer ${CREATORC_API_KEY}` }
       });
 
