@@ -309,7 +309,7 @@ async function runCrawlForUser(userEmail) {
       // Step 1: Fetch reels from CreatorCrawl API with proper error handling
       console.log(`Fetching reels for @${handle.handle}...`);
       
-      const ccResp = await fetch(`${CC_BASE}/reels?handle=${handle.handle}&count=25`, {
+      const ccResp = await fetch(`${CC_BASE}/instagram/user/reels?handle=${handle.handle}`, {
         headers: { 'Authorization': `Bearer ${CREATORC_API_KEY}` }
       });
 
@@ -327,7 +327,7 @@ async function runCrawlForUser(userEmail) {
 
       // Now safe to parse as JSON
       const ccData = await ccResp.json();
-      const reels = ccData.reels || [];
+      const reels = ccData.data || [];
 
       if (!Array.isArray(reels)) {
         throw new Error(`CreatorCrawl returned invalid reel array: ${JSON.stringify(ccData).slice(0, 100)}`);
@@ -342,8 +342,9 @@ async function runCrawlForUser(userEmail) {
           const existing = await db.collection('content').doc(reel.id).get();
           if (existing.exists) continue;
 
-          // Step 3: analyze
-          const analysis = await analyzeReelWithClaude(reel.media_url, categories);
+          // Step 3: analyze (use media URL or reel URL)
+          const mediaUrl = reel.media?.[0]?.url || reel.url;
+          const analysis = await analyzeReelWithClaude(mediaUrl, categories);
 
           // Step 4: embedding + vector search
           const embedding = await generateEmbedding(analysis.description);
