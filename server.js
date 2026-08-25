@@ -1,5 +1,5 @@
 /* =====================================================================
-   Creator Crawl Phase 4 — Backend Server
+   Creator Crawl Phase 4 — Backend Server (PATCHED)
    Ideas-based AI pipeline: Claude (analysis) + Gemini (embeddings) + Pinecone (vector search)
    ===================================================================== */
 
@@ -24,7 +24,6 @@ try {
 }
 
 // IMPORTANT: this must stay 'creator-crawl' — the named database, not the default one.
-// (This was the Phase 3 root cause bug — do not change back to admin.firestore())
 const db = getFirestore('creator-crawl');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
@@ -44,12 +43,9 @@ const SCHEDULER_SECRET = process.env.SCHEDULER_SECRET || 'change-this-too';
 
 /* --------- Standardized tag vocabulary (fixed, not AI-invented) --------- */
 const TAG_VOCABULARY = [
-  // format
   'tutorial', 'behind_the_scenes', 'trending_audio', 'text_overlay_heavy',
   'fast_cuts', 'voiceover', 'talking_head', 'before_after',
-  // content
   'educational', 'entertainment', 'promotional', 'inspirational', 'trending_topic',
-  // production
   'low_production', 'medium_production', 'high_production'
 ];
 
@@ -102,7 +98,7 @@ app.post('/api/handles', verifyToken, async (req, res) => {
     await docRef.set({
       user_id: req.user.email,
       handle: handle.replace(/^@/, ''),
-      frequency, // 'daily' | 'weekly' | 'bi-weekly' | 'monthly' | 'bi-monthly'
+      frequency,
       enabled: true,
       last_crawled_at: null,
       created_at: admin.firestore.FieldValue.serverTimestamp()
@@ -148,9 +144,9 @@ app.get('/api/categories', verifyToken, async (req, res) => {
 app.post('/api/categories', verifyToken, async (req, res) => {
   const {
     field_name, display_name, type, required, order,
-    calculation_type,   // 'ai_generated' | 'mathematical'
-    ai_prompt,          // used only if calculation_type === 'ai_generated'
-    formula             // used only if calculation_type === 'mathematical', e.g. "views / likes"
+    calculation_type,
+    ai_prompt,
+    formula
   } = req.body;
   if (!field_name || !display_name || !type) {
     return res.status(400).json({ error: 'field_name, display_name, type required' });
@@ -235,7 +231,7 @@ Fill "fields" with one key per category listed above, using the described prompt
 async function generateEmbedding(text) {
   const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
   const result = await model.embedContent(text);
-  return result.embedding.values; // array of floats
+  return result.embedding.values;
 }
 
 async function findSimilarIdeas(embedding, tags, topK = 5) {
@@ -285,14 +281,13 @@ const FREQUENCY_DAYS = {
 
 function isDueToday(handle) {
   if (!handle.enabled) return false;
-  if (!handle.last_crawled_at) return true; // never crawled
+  if (!handle.last_crawled_at) return true;
   const daysSince = (Date.now() - handle.last_crawled_at.toMillis()) / 86400000;
   return daysSince >= (FREQUENCY_DAYS[handle.frequency] || 1);
 }
 
 /* =====================================================================
-   MAIN CRAWL PIPELINE
-   Triggered by Cloud Scheduler at 00:00, or manually by a logged-in user
+   MAIN CRAWL PIPELINE (PATCHED with better error handling)
    ===================================================================== */
 
 async function runCrawlForUser(userEmail) {
@@ -302,70 +297,100 @@ async function runCrawlForUser(userEmail) {
   const categoriesSnap = await db.collection('categories').where('user_id', '==', userEmail).get();
   const categories = categoriesSnap.docs.map(d => d.data());
 
-  const runLog = { user_id: userEmail, started_at: admin.firestore.FieldValue.serverTimestamp(), handles_processed: [], errors: [] };
+  const runLog = {
+    user_id: userEmail,
+    started_at: admin.firestore.FieldValue.serverTimestamp(),
+    handles_processed: [],
+    errors: []
+  };
 
   for (const handle of dueHandles) {
     try {
-      // Step 1: one-shot fetch of 25 reels via CreatorCrawl API
+      // Step 1: Fetch reels from CreatorCrawl API with proper error handling
+      console.log(`Fetching reels for @${handle.handle}...`);
+      
       const ccResp = await fetch(`${CC_BASE}/reels?handle=${handle.handle}&count=25`, {
         headers: { 'Authorization': `Bearer ${CREATORC_API_KEY}` }
       });
+
+      // Check HTTP status first
+      if (!ccResp.ok) {
+        throw new Error(`CreatorCrawl API error: ${ccResp.status} ${ccResp.statusText}`);
+      }
+
+      // Check content-type to ensure it's JSON
+      const contentType = ccResp.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await ccResp.text();
+        throw new Error(`CreatorCrawl returned non-JSON: ${contentType} - ${text.slice(0, 100)}`);
+      }
+
+      // Now safe to parse as JSON
       const ccData = await ccResp.json();
       const reels = ccData.reels || [];
 
+      if (!Array.isArray(reels)) {
+        throw new Error(`CreatorCrawl returned invalid reel array: ${JSON.stringify(ccData).slice(0, 100)}`);
+      }
+
+      console.log(`Got ${reels.length} reels for @${handle.handle}`);
+
       let newCount = 0;
       for (const reel of reels) {
-        // Step 2: skip if already in DB
-        const existing = await db.collection('content').doc(reel.id).get();
-        if (existing.exists) continue;
+        try {
+          // Step 2: skip if already in DB
+          const existing = await db.collection('content').doc(reel.id).get();
+          if (existing.exists) continue;
 
-        // Step 3: analyze
-        const analysis = await analyzeReelWithClaude(reel.media_url, categories);
+          // Step 3: analyze
+          const analysis = await analyzeReelWithClaude(reel.media_url, categories);
 
-        // Step 4: embedding + vector search
-        const embedding = await generateEmbedding(analysis.description);
-        const candidates = await findSimilarIdeas(embedding, analysis.tags);
-        const decision = await decideIdeaMatch(analysis.description, candidates);
+          // Step 4: embedding + vector search
+          const embedding = await generateEmbedding(analysis.description);
+          const candidates = await findSimilarIdeas(embedding, analysis.tags);
+          const decision = await decideIdeaMatch(analysis.description, candidates);
 
-        let ideaId;
-        if (decision.match && decision.idea_id) {
-          // Step 5a: existing idea → add this reel as new source/implementation
-          ideaId = decision.idea_id;
-          await db.collection('ideas').doc(ideaId)
-            .collection('source_reels').doc(reel.id).set({
+          let ideaId;
+          if (decision.match && decision.idea_id) {
+            ideaId = decision.idea_id;
+            await db.collection('ideas').doc(ideaId)
+              .collection('source_reels').doc(reel.id).set({
+                ...reel, analyzed_at: admin.firestore.FieldValue.serverTimestamp()
+              });
+          } else {
+            const ideaRef = db.collection('ideas').doc();
+            ideaId = ideaRef.id;
+            await ideaRef.set({
+              description: analysis.description,
+              production_blueprint: analysis.production_blueprint,
+              tags: analysis.tags,
+              created_at: admin.firestore.FieldValue.serverTimestamp()
+            });
+            await ideaRef.collection('source_reels').doc(reel.id).set({
               ...reel, analyzed_at: admin.firestore.FieldValue.serverTimestamp()
             });
-        } else {
-          // Step 5b: no match → create new idea
-          const ideaRef = db.collection('ideas').doc();
-          ideaId = ideaRef.id;
-          await ideaRef.set({
-            description: analysis.description,
-            production_blueprint: analysis.production_blueprint,
-            tags: analysis.tags,
+            await pineconeIndex.upsert([{
+              id: ideaId,
+              values: embedding,
+              metadata: { description: analysis.description, tags: analysis.tags }
+            }]);
+          }
+
+          // Store reel + AI fields + link to idea
+          await db.collection('content').doc(reel.id).set({
+            user_id: userEmail,
+            source_handle: handle.handle,
+            idea_id: ideaId,
+            ...reel,
+            ai_fields: analysis.fields,
             created_at: admin.firestore.FieldValue.serverTimestamp()
           });
-          await ideaRef.collection('source_reels').doc(reel.id).set({
-            ...reel, analyzed_at: admin.firestore.FieldValue.serverTimestamp()
-          });
-          await pineconeIndex.upsert([{
-            id: ideaId,
-            values: embedding,
-            metadata: { description: analysis.description, tags: analysis.tags }
-          }]);
+
+          newCount++;
+        } catch (reelErr) {
+          console.error(`Error processing reel ${reel?.id}:`, reelErr.message);
+          // Continue with next reel, don't fail the whole handle
         }
-
-        // Store reel + AI fields + link to idea, in 'content'
-        await db.collection('content').doc(reel.id).set({
-          user_id: userEmail,
-          source_handle: handle.handle,
-          idea_id: ideaId,
-          ...reel,
-          ai_fields: analysis.fields,
-          created_at: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        newCount++;
       }
 
       await db.collection('handles').doc(handle.id).update({
@@ -373,8 +398,9 @@ async function runCrawlForUser(userEmail) {
       });
 
       runLog.handles_processed.push({ handle: handle.handle, new_reels: newCount });
-    } catch (err) {
-      runLog.errors.push({ handle: handle.handle, error: err.message });
+    } catch (handleErr) {
+      console.error(`Error crawling @${handle.handle}:`, handleErr.message);
+      runLog.errors.push({ handle: handle.handle, error: handleErr.message });
     }
   }
 
@@ -383,7 +409,7 @@ async function runCrawlForUser(userEmail) {
   return runLog;
 }
 
-// Cloud Scheduler hits this once a day at 00:00 (protected by shared secret, not JWT)
+// Cloud Scheduler hits this
 app.post('/api/crawl/run', verifySchedulerSecret, async (req, res) => {
   try {
     const result = await runCrawlForUser(SHARED_EMAIL);
@@ -391,7 +417,7 @@ app.post('/api/crawl/run', verifySchedulerSecret, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Manual trigger from the UI, for testing
+// Manual trigger from the UI
 app.post('/api/crawl/run-now', verifyToken, async (req, res) => {
   try {
     const result = await runCrawlForUser(req.user.email);
