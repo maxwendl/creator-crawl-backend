@@ -13,6 +13,10 @@
     "firebase-admin": "^11.10.1",
     "jsonwebtoken": "^9.0.2",
     "dotenv": "^16.3.1"
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@google/generative-ai": "^0.21.0",
+    "@pinecone-database/pinecone": "^3.0.0"
+
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
