@@ -329,6 +329,12 @@ async function runCrawlForUser(userEmail) {
       const ccData = await ccResp.json();
       const reels = ccData.data || [];
 
+      console.log(`CreatorCrawl response for @${handle.handle}:`, {
+        reelsCount: reels.length,
+        hasData: !!ccData.data,
+        responseKeys: Object.keys(ccData)
+      });[span_1](start_span)[span_1](end_span)
+
       if (!Array.isArray(reels)) {
         throw new Error(`CreatorCrawl returned invalid reel array: ${JSON.stringify(ccData).slice(0, 100)}`);
       }
