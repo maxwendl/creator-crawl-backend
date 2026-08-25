@@ -204,15 +204,8 @@ async function analyzeReelWithClaude(mediaUrl, categories) {
 
   const prompt = `You are analyzing a short-form video (Instagram Reel) at this URL: ${mediaUrl}
 
-Return ONLY valid JSON with this exact structure:
-{
-  "description": "neutral, objective description of the core concept/idea of this video (not the specific execution — the underlying reusable idea)",
-  "production_blueprint": "how this type of video is structured, step by step, so someone could recreate the format with different content",
-  "tags": ["pick only from this fixed vocabulary: ${TAG_VOCABULARY.join(', ')}"],
-  "fields": {
-${categoryList ? categoryList.split('\n').map(l => `    // ${l}`).join('\n') : '    // no AI fields configured'}
-  }
-}
+Return ONLY valid JSON with this exact structure on a single line:
+{"description": "neutral, objective description of the core concept/idea of this video (not the specific execution — the underlying reusable idea)", "production_blueprint": "how this type of video is structured, step by step, so someone could recreate the format with different content", "tags": ["pick only from this fixed vocabulary: ${TAG_VOCABULARY.join(', ')}"], "fields": {${categoryList ? categoryList.split('\n').map(l => `// ${l}`).join(' ') : '// no AI fields configured'}}}
 
 Fill "fields" with one key per category listed above, using the described prompt for each to decide the value.`;
 
@@ -222,14 +215,24 @@ Fill "fields" with one key per category listed above, using the described prompt
     messages: [{ role: 'user', content: prompt }]
   });
 
-  const text = msg.content[0].text;
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('Claude did not return valid JSON');
-  return JSON.parse(jsonMatch[0]);
+  const text = msg.content[0]?.text || '';
+  
+  try {
+    const jsonMatch = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
+    if (!jsonMatch) {
+      console.log('Claude analysis parse failed, no JSON found. Response:', text.slice(0, 300));
+      throw new Error('Claude did not return valid JSON');
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return parsed;
+  } catch (err) {
+    console.log('Claude analysis JSON parse error:', err.message, 'Response:', text.slice(0, 300));
+    throw err;
+  }
 }
 
 async function generateEmbedding(text) {
-  const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+  const model = genAI.getGenerativeModel({ model: 'embedding-001' });
   const result = await model.embedContent(text);
   return result.embedding.values;
 }
@@ -253,7 +256,7 @@ async function decideIdeaMatch(newDescription, candidates) {
 
   const prompt = `New video idea:\n${newDescription}\n\nExisting candidate ideas:\n${candidateList}\n\n` +
     `Does the new video represent the SAME underlying idea as one of these candidates? ` +
-    `Reply ONLY with valid JSON: {"match": true, "idea_id": "..."} or {"match": false}`;
+    `Reply ONLY with valid JSON on a single line: {"match": true, "idea_id": "..."} or {"match": false}`;
 
   const msg = await anthropic.messages.create({
     model: 'claude-sonnet-5',
@@ -261,10 +264,21 @@ async function decideIdeaMatch(newDescription, candidates) {
     messages: [{ role: 'user', content: prompt }]
   });
 
-  const text = msg.content[0].text;
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return { match: false };
-  return JSON.parse(jsonMatch[0]);
+  const text = msg.content[0]?.text || '';
+  
+  try {
+    // Try to extract JSON object from the response
+    const jsonMatch = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
+    if (!jsonMatch) {
+      console.log('Claude decision parse failed, no JSON found. Response:', text.slice(0, 200));
+      return { match: false };
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return parsed;
+  } catch (err) {
+    console.log('Claude decision JSON parse error:', err.message, 'Response:', text.slice(0, 200));
+    return { match: false };
+  }
 }
 
 /* =====================================================================
