@@ -196,43 +196,57 @@ app.delete('/api/categories/:field_name', verifyToken, async (req, res) => {
    AI HELPERS
    ===================================================================== */
 
-async function analyzeReelWithClaude(mediaUrl, categories) {
+async function analyzeReelWithGemini(reel, categories) {
   const categoryList = categories
     .filter(c => c.calculation_type !== 'mathematical')
     .map(c => `- ${c.field_name} (${c.type}): ${c.ai_prompt || c.display_name}`)
     .join('\n');
 
-  const prompt = `You are analyzing a short-form video (Instagram Reel) at this URL: ${mediaUrl}
+  const videoUrl = reel.media?.[0]?.url || reel.url;
+  if (!videoUrl) throw new Error('No video URL found on reel');
 
-Return ONLY valid JSON with this exact structure on a single line:
-{"description": "neutral, objective description of the core concept/idea of this video (not the specific execution — the underlying reusable idea)", "production_blueprint": "how this type of video is structured, step by step, so someone could recreate the format with different content", "tags": ["pick only from this fixed vocabulary: ${TAG_VOCABULARY.join(', ')}"], "fields": {${categoryList ? categoryList.split('\n').map(l => `// ${l}`).join(' ') : '// no AI fields configured'}}}
+  // Fetch the actual video bytes (Gemini can watch video; Claude cannot)
+  const videoResp = await fetch(videoUrl);
+  if (!videoResp.ok) throw new Error(`Failed to download video: ${videoResp.status}`);
+  const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
 
-Fill "fields" with one key per category listed above, using the described prompt for each to decide the value.`;
+  // Inline base64 works for videos under ~20MB, which covers virtually all Reels.
+  // If this starts failing on longer videos, switch to the Gemini File API upload flow instead.
+  if (videoBuffer.length > 19 * 1024 * 1024) {
+    throw new Error(`Video too large for inline analysis: ${(videoBuffer.length / 1024 / 1024).toFixed(1)}MB`);
+  }
+  const videoBase64 = videoBuffer.toString('base64');
 
-  const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-5',
-    max_tokens: 1500,
-    messages: [{ role: 'user', content: prompt }]
-  });
+  const promptText = `Watch this Instagram Reel video carefully.
+Caption: ${reel.text || '(no caption)'}
+Hashtags: ${(reel.hashtags || []).join(', ') || '(none)'}
 
-  const text = msg.content[0]?.text || '';
-  
+Return ONLY valid JSON on a single line with this exact structure:
+{"description": "neutral, objective description of the core concept/idea of this video (not the specific execution — the underlying reusable idea)", "production_blueprint": "how this type of video is structured, step by step, so someone could recreate the format with different content", "tags": ["pick only from this fixed vocabulary: ${TAG_VOCABULARY.join(', ')}"], "fields": {${categoryList ? categoryList.split('\n').map(l => `// ${l}`).join(' ') : '// no AI fields configured'}}}`;
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-3.7-flash' });
+  const result = await model.generateContent([
+    { inlineData: { mimeType: 'video/mp4', data: videoBase64 } },
+    promptText
+  ]);
+
+  const text = result.response.text() || '';
+
   try {
     const jsonMatch = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
     if (!jsonMatch) {
-      console.log('Claude analysis parse failed, no JSON found. Response:', text.slice(0, 300));
-      throw new Error('Claude did not return valid JSON');
+      console.log('Gemini analysis parse failed, no JSON found. Response:', text.slice(0, 300));
+      throw new Error('Gemini did not return valid JSON');
     }
-    const parsed = JSON.parse(jsonMatch[0]);
-    return parsed;
+    return JSON.parse(jsonMatch[0]);
   } catch (err) {
-    console.log('Claude analysis JSON parse error:', err.message, 'Response:', text.slice(0, 300));
+    console.log('Gemini analysis JSON parse error:', err.message, 'Response:', text.slice(0, 300));
     throw err;
   }
 }
 
 async function generateEmbedding(text) {
-  const model = genAI.getGenerativeModel({ model: 'embedding-001' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-embedding-001' });
   const result = await model.embedContent(text);
   return result.embedding.values;
 }
@@ -378,9 +392,8 @@ async function runCrawlForUser(userEmail) {
           const existing = await db.collection('content').doc(reel.id).get();
           if (existing.exists) continue;
 
-          // Step 3: analyze (use media URL or reel URL)
-          const mediaUrl = reel.media?.[0]?.url || reel.url;
-          const analysis = await analyzeReelWithClaude(mediaUrl, categories);
+          // Step 3: analyze — Gemini watches the actual video (Claude cannot)
+          const analysis = await analyzeReelWithGemini(reel, categories);
 
           // Step 4: embedding + vector search
           const embedding = await generateEmbedding(analysis.description);
