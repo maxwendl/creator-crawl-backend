@@ -524,6 +524,16 @@ async function runCrawlForUser(userEmail, triggerType) {
       });
 
       if (!ccResp.ok) throw new Error(`CreatorCrawl API error: ${ccResp.status} ${ccResp.statusText}`);
+      if (!ccResp.ok) {
+  if (ccResp.status === 422) {
+    // Handle doesn't exist, is private, or has no reels — treat as empty result
+    await pushCrawlStep(`@${handle.handle}: nicht verarbeitbar (privat, nicht vorhanden, oder keine Reels)`);
+    await updateCrawlStatus({ handles_done: admin.firestore.FieldValue.increment(1) });
+    continue; // skip to next handle
+  }
+  throw new Error(`CreatorCrawl API error: ${ccResp.status} ${ccResp.statusText}`);
+}
+
 
       const contentType = ccResp.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
